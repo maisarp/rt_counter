@@ -9,7 +9,7 @@ import calendar
 # Importa CustomTkinter para interface moderna
 import customtkinter as ctk
 
-from .csv_viewer import HtmlRealtimeViewer, open_html_viewer, open_final_csv_dialog, open_csv_in_excel
+from .csv_viewer import open_final_csv_dialog, open_csv_in_excel
 from .paths import open_data_folder, get_app_data_dir
 from .storage import (
     CalendarCounter,
@@ -63,10 +63,11 @@ class CounterApp:
         """Configura a janela principal, calendários e ações disponíveis."""
         self.root = root
         self.counter = counter
-        self.html_viewer: HtmlRealtimeViewer | None = None
+        # self.html_viewer: HtmlRealtimeViewer | None = None  # DEPRECATED - Visualização HTML removida
         self.root.title("Retweet Counter")
-        self.root.geometry("340x580")
-        self.root.minsize(320, 550)
+        # Altura estendida para mostrar timer e controles sem precisar expandir
+        self.root.geometry("340x720")
+        self.root.minsize(320, 680)
         self.root.resizable(True, True)
         self.root.configure(fg_color=COLORS["bg_dark"])
 
@@ -121,18 +122,19 @@ class CounterApp:
         header_buttons = ctk.CTkFrame(header_frame, fg_color="transparent")
         header_buttons.pack(side=tk.RIGHT)
         
-        view_button = ctk.CTkButton(
-            header_buttons,
-            text="Visualizar",
-            width=75,
-            height=28,
-            font=ctk.CTkFont(size=10),
-            command=self._open_html_viewer,
-            fg_color=COLORS["tool_purple"],
-            hover_color=COLORS["tool_purple_hover"],
-            corner_radius=6
-        )
-        view_button.pack(side=tk.LEFT, padx=(0, 6))
+        # DEPRECATED - Botão Visualizar HTML removido
+        # view_button = ctk.CTkButton(
+        #     header_buttons,
+        #     text="Visualizar",
+        #     width=75,
+        #     height=28,
+        #     font=ctk.CTkFont(size=10),
+        #     command=self._open_html_viewer,
+        #     fg_color=COLORS["tool_purple"],
+        #     hover_color=COLORS["tool_purple_hover"],
+        #     corner_radius=6
+        # )
+        # view_button.pack(side=tk.LEFT, padx=(0, 6))
         
         config_button = ctk.CTkButton(
             header_buttons,
@@ -371,42 +373,11 @@ class CounterApp:
         )
         manual_button.pack(side=tk.LEFT)
 
-        # Grupo Meta (direita)
-        target_group = ctk.CTkFrame(row1, fg_color="transparent")
-        target_group.pack(side=tk.RIGHT)
-        
-        ctk.CTkLabel(
-            target_group, 
-            text="Meta", 
-            font=ctk.CTkFont(size=9),
-            text_color=COLORS["text_secondary"]
-        ).pack(side=tk.LEFT, padx=(0, 4))
-
-        target_entry = ctk.CTkEntry(
-            target_group, 
-            textvariable=self.weekly_target_var, 
-            width=55, 
-            height=26,
-            justify="center", 
-            font=ctk.CTkFont(size=10),
-            fg_color=COLORS["bg_input"],
-            border_color=COLORS["border"]
-        )
-        target_entry.pack(side=tk.LEFT, padx=(0, 4))
-        target_entry.bind("<Return>", lambda event: self._on_target_apply())
-
-        target_button = ctk.CTkButton(
-            target_group, 
-            text="OK", 
-            command=self._on_target_apply, 
-            width=35,
-            height=26,
-            font=ctk.CTkFont(size=9),
-            fg_color=COLORS["tool_purple"],
-            hover_color=COLORS["tool_purple_hover"],
-            corner_radius=4
-        )
-        target_button.pack(side=tk.LEFT)
+        # REMOVIDO: Grupo Meta foi movido para a janela de Configuração
+        # A meta agora é configurada junto com a configuração da semana
+        # target_group = ctk.CTkFrame(row1, fg_color="transparent")
+        # target_group.pack(side=tk.RIGHT)
+        # ... (código antigo comentado)
 
         # Linha 2: Controles do timer (centralizados)
         row2 = ctk.CTkFrame(controls_inner, fg_color="transparent")
@@ -779,30 +750,31 @@ class CounterApp:
         except Exception as error:
             messagebox.showerror("Erro", f"Falha ao salvar os dados: {error}")
     
-    def _start_realtime_viewer(self) -> None:
-        """Inicia o visualizador HTML em tempo real."""
-        # Força a criação inicial do arquivo CSV
-        self.counter.save()
-        
-        # Inicia o visualizador
-        self.html_viewer = HtmlRealtimeViewer(self.counter)
-        self.html_viewer.start()
-        
-        # Aguarda um momento e abre o navegador
-        self.root.after(500, self._open_html_viewer)
-        self.status_var.set("Visualização em tempo real ativada no navegador!")
-    
-    def _open_html_viewer(self) -> None:
-        """Abre o visualizador HTML no navegador."""
-        if self.html_viewer:
-            html_path = self.html_viewer.html_path
-            if open_html_viewer(html_path):
-                self.status_var.set("Visualização aberta no navegador - atualização automática ativa!")
-            else:
-                messagebox.showwarning(
-                    "Aviso",
-                    "Não foi possível abrir o visualizador no navegador."
-                )
+    # DEPRECATED - Visualização HTML em tempo real removida
+    # def _start_realtime_viewer(self) -> None:
+    #     """Inicia o visualizador HTML em tempo real."""
+    #     # Força a criação inicial do arquivo CSV
+    #     self.counter.save()
+    #     
+    #     # Inicia o visualizador
+    #     self.html_viewer = HtmlRealtimeViewer(self.counter)
+    #     self.html_viewer.start()
+    #     
+    #     # Aguarda um momento e abre o navegador
+    #     self.root.after(500, self._open_html_viewer)
+    #     self.status_var.set("Visualização em tempo real ativada no navegador!")
+    # 
+    # def _open_html_viewer(self) -> None:
+    #     """Abre o visualizador HTML no navegador."""
+    #     if self.html_viewer:
+    #         html_path = self.html_viewer.html_path
+    #         if open_html_viewer(html_path):
+    #             self.status_var.set("Visualização aberta no navegador - atualização automática ativa!")
+    #         else:
+    #             messagebox.showwarning(
+    #                 "Aviso",
+    #                 "Não foi possível abrir o visualizador no navegador."
+    #             )
 
     def _open_data_folder(self) -> None:
         """Abre a pasta onde os dados da aplicação são armazenados."""
@@ -825,13 +797,23 @@ class CounterApp:
             new_target = int(value_text)
             current_date = self._current_date()
             
-            self.counter.set_weekly_target(current_date, new_target)
+            # Obtém número da semana no mês
+            week_in_month = self.counter.get_week_number_in_month(current_date)
+            
+            # Usa novo formato (ano-mês-semana)
+            self.counter.set_weekly_target(
+                current_date.year,
+                current_date.month,
+                week_in_month,
+                new_target
+            )
             self.weekly_target_var.set("")
             self._refresh_weekly_info()
             
-            # Atualiza status
-            year, week, _ = current_date.isocalendar()
-            self.status_var.set(f"Meta semanal {year}-S{week:02d} definida: {new_target}")
+            # Atualiza status com formato correto
+            self.status_var.set(
+                f"Meta {current_date.month:02d}/{current_date.year}-S{week_in_month} definida: {new_target}"
+            )
             
         except ValueError:
             messagebox.showerror("Erro", "Digite um número válido para a meta semanal.")
@@ -842,22 +824,33 @@ class CounterApp:
         """Atualiza informações de meta e resumo semanal."""
         current_date = self._current_date()
         
-        # Atualiza meta semanal atual
-        current_target = self.counter.get_weekly_target(current_date)
+        # Obtém o número da semana no mês usando o método do counter
+        week_in_month = self.counter.get_week_number_in_month(current_date)
+        
+        # Atualiza meta semanal atual usando novo formato (ano-mês-semana)
+        current_target = self.counter.get_weekly_target(
+            current_date.year, 
+            current_date.month, 
+            week_in_month
+        )
         self.weekly_target_var.set(str(current_target.expected) if current_target.expected > 0 else "")
         
-        # Atualiza resumo semanal
-        summary = self.counter.get_weekly_summary(current_date)
+        # Atualiza resumo semanal usando novo formato
+        summary = self.counter.get_weekly_summary(
+            current_date.year,
+            current_date.month,
+            week_in_month
+        )
         
-        # Calcula semana do mês (1-5)
-        first_day_of_month = current_date.replace(day=1)
-        week_of_month = ((current_date.day - 1) // 7) + 1
+        # Busca configuração da semana para obter work_days
+        week_config = self.counter.get_week_config(current_date.year, current_date.month, week_in_month)
+        work_days = week_config.work_days if week_config else 6  # Padrão: 6 dias
         
         # Formato: MM-AA - S# (ex: 12-25 - S1)
         month_year = f"{current_date.month:02d}-{current_date.year % 100:02d}"
         
         summary_text = (
-            f"{month_year} - S{week_of_month}: "
+            f"{month_year} - S{week_in_month} ({work_days}d): "
             f"Feito: {summary['completed']} | "
             f"Esperado: {summary['expected']} | "
             f"Falta: {summary['missing']}"
@@ -972,13 +965,23 @@ class CounterApp:
         )
         reset_btn.pack(side=tk.LEFT)
         
-        # Botão Salvar e Fechar
-        def save_and_close():
-            """Salva e fecha a janela de configuração."""
+        # Botão Salvar (não fecha mais a janela)
+        def save_config():
+            """Salva as configurações e mostra feedback visual."""
             self.counter.save()
             self._render_calendar()
             self._refresh_weekly_info()
-            dialog.destroy()
+            
+            # Feedback visual para o usuário
+            status_label.configure(
+                text="Configurações salvas com sucesso!",
+                text_color=COLORS["pastel_green"]
+            )
+            # Limpa o feedback após 3 segundos
+            dialog.after(3000, lambda: status_label.configure(
+                text="Selecione uma data no calendário para configurar a semana",
+                text_color=COLORS["text_secondary"]
+            ))
         
         # Variáveis - usa o mês/ano que está sendo visualizado na tela principal
         viewed_month = MONTH_NAME_TO_NUMBER.get(self.month_var.get(), date.today().month)
@@ -1045,7 +1048,7 @@ class CounterApp:
         save_btn_top = ctk.CTkButton(
             target_inner,
             text="Salvar",
-            command=save_and_close,
+            command=save_config,
             fg_color=COLORS["pastel_green"],
             hover_color=COLORS["pastel_green_hover"],
             text_color="#1a1a2e",
@@ -1245,7 +1248,11 @@ class CounterApp:
                     calendar_buttons.append((btn, actual_day, actual_month, actual_year, is_other_month, col_idx >= 5))
         
         def select_date(day: int, month: int, year: int):
-            """Seleciona uma data no mini calendário."""
+            """
+            Seleciona uma data no mini calendário e salva automaticamente a configuração.
+            
+            O salvamento automático ocorre quando todos os campos estão preenchidos.
+            """
             selected_date = date(year, month, day)
             selected_start_date.set(selected_date.strftime("%Y-%m-%d"))
             
@@ -1279,9 +1286,11 @@ class CounterApp:
             month_name = MONTH_NUMBER_TO_NAME.get(selected_date.month, "")
             
             selected_label.configure(
-                text=f"{selected_date.day:02d}/{month_name[:3]}/{selected_date.year} ({weekday_name[:3]})",
+                text=f"{selected_date.day:02d}/{month_name[:3]}/{selected_date.year} ({weekday_name[:3]}) - Preencha os campos e clique 'Adicionar Semana'",
                 text_color="#007bff"
             )
+            
+            # NÃO salva automaticamente - usuário deve clicar em "Adicionar Semana"
         
         # Frame para configuração da semana
         week_config_frame = ctk.CTkFrame(main_frame, corner_radius=8, fg_color=COLORS["bg_card"])
@@ -1323,7 +1332,7 @@ class CounterApp:
         
         work_days_combo = ctk.CTkComboBox(
             config_inner,
-            values=["5", "6", "7"],
+            values=["1", "2", "3", "4", "5", "6", "7"],
             width=50,
             state="readonly",
             font=ctk.CTkFont(size=10),
@@ -1333,8 +1342,28 @@ class CounterApp:
             button_hover_color=COLORS["tool_purple_hover"],
             dropdown_fg_color=COLORS["bg_card"]
         )
-        work_days_combo.set("6")
+        work_days_combo.set("7")
         work_days_combo.grid(row=0, column=3, pady=3)
+        
+        # Meta semanal (novo campo)
+        ctk.CTkLabel(
+            config_inner, 
+            text="Meta:", 
+            font=ctk.CTkFont(size=10),
+            text_color=COLORS["text_primary"]
+        ).grid(row=0, column=4, sticky=tk.W, pady=3, padx=(15, 5))
+        
+        weekly_target_entry = ctk.CTkEntry(
+            config_inner,
+            width=60,
+            height=26,
+            justify="center",
+            font=ctk.CTkFont(size=10),
+            fg_color=COLORS["bg_input"],
+            border_color=COLORS["border"],
+            placeholder_text="0"
+        )
+        weekly_target_entry.grid(row=0, column=5, pady=3)
         
         # Frame para semanas configuradas
         configured_frame = ctk.CTkFrame(main_frame, corner_radius=8, fg_color=COLORS["bg_card"])
@@ -1376,7 +1405,7 @@ class CounterApp:
         
         status_label = ctk.CTkLabel(
             status_frame,
-            text="Selecione uma data e clique em 'Adicionar'",
+            text="Selecione uma data no calendário para configurar a semana",
             text_color=COLORS["text_secondary"],
             font=ctk.CTkFont(size=9)
         )
@@ -1422,10 +1451,14 @@ class CounterApp:
                     start_month_name = MONTH_NUMBER_TO_NAME.get(start_date.month, "")[:3]
                     end_month_name = MONTH_NUMBER_TO_NAME.get(end_date.month, "")[:3]
                     
+                    # Busca meta semanal configurada
+                    week_target = self.counter.get_weekly_target(year, month_idx, config.week_in_month)
+                    meta_info = f" | Meta: {week_target.expected}" if week_target.expected > 0 else ""
+                    
                     text = (
                         f"  S{config.week_in_month} ({color}): "
                         f"{start_date.day:02d}/{start_month_name} → {end_date.day:02d}/{end_month_name} "
-                        f"({config.work_days} dias)\n"
+                        f"({config.work_days} dias){meta_info}\n"
                     )
                     configured_list_text.insert(tk.END, text)
                     configured_list.insert(tk.END, text.strip())
@@ -1433,7 +1466,7 @@ class CounterApp:
             configured_list_text.configure(state="disabled")
         
         def save_week_config():
-            """Salva a configuração da semana."""
+            """Salva a configuração da semana e meta automaticamente."""
             if not selected_start_date.get():
                 status_label.configure(
                     text="Selecione uma data de início no calendário primeiro", 
@@ -1457,7 +1490,7 @@ class CounterApp:
             # Primeiro dia da semana baseado no dia selecionado
             first_weekday = start_date.weekday()
             
-            # Salva configuração
+            # Salva configuração da semana
             self.counter.set_week_config(
                 year=year,
                 month=month_idx,
@@ -1467,21 +1500,33 @@ class CounterApp:
                 first_weekday=first_weekday
             )
             
+            # Salva meta semanal se informada
+            target_text = weekly_target_entry.get().strip()
+            if target_text:
+                try:
+                    target_value = int(target_text)
+                    if target_value >= 0:
+                        self.counter.set_weekly_target(year, month_idx, week_selection, target_value)
+                except ValueError:
+                    pass  # Ignora valor inválido
+            
             refresh_configured_list()
             
             end_date = start_date + timedelta(days=work_days - 1)
             
             # Feedback visual no status
+            meta_info = f" | Meta: {target_text}" if target_text else ""
             success_msg = (
                 f"S{week_selection} ({WEEK_COLOR_NAMES.get(week_selection, '')}) salva: "
-                f"{start_date.strftime('%d/%m')} → {end_date.strftime('%d/%m')} ({work_days} dias)"
+                f"{start_date.strftime('%d/%m')} → {end_date.strftime('%d/%m')} ({work_days}d){meta_info}"
             )
             status_label.configure(text=success_msg, text_color=COLORS["pastel_green"])
             
             # Limpa seleção do calendário
             selected_start_date.set("")
+            weekly_target_entry.delete(0, tk.END)
             selected_label.configure(
-                text="Salvo! Selecione outro ou feche.",
+                text="Salvo! Selecione outra data ou feche.",
                 text_color=COLORS["pastel_green"]
             )
         
@@ -1527,31 +1572,32 @@ class CounterApp:
                 text_color=COLORS["pastel_red"]
             )
         
-        # Botões de ação
+        # Botões de ação (apenas Remover - Adicionar foi removido pois salvamento é automático)
         buttons_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         buttons_frame.pack(fill=tk.X)
         
-        save_btn = ctk.CTkButton(
+        # Botão "Adicionar Semana" para salvar a configuração
+        add_week_btn = ctk.CTkButton(
             buttons_frame,
-            text="Adicionar",
+            text="Adicionar Semana",
             command=save_week_config,
             fg_color=COLORS["pastel_green"],
             hover_color=COLORS["pastel_green_hover"],
             text_color="#1a1a2e",
-            width=90,
+            width=140,
             height=30,
             font=ctk.CTkFont(size=10, weight="bold")
         )
-        save_btn.pack(side=tk.LEFT, padx=(0, 8))
+        add_week_btn.pack(side=tk.LEFT, padx=(0, 10))
         
         delete_btn = ctk.CTkButton(
             buttons_frame,
-            text="Remover",
+            text="Remover Semana",
             command=delete_selected_config,
             fg_color=COLORS["pastel_red"],
             hover_color=COLORS["pastel_red_hover"],
             text_color="#1a1a2e",
-            width=80,
+            width=140,
             height=30,
             font=ctk.CTkFont(size=10)
         )
@@ -1560,8 +1606,15 @@ class CounterApp:
         # Atualiza quando mês/ano alvo mudar
         def on_target_change(*args):
             refresh_configured_list()
+            # Atualiza calendário para o mês/ano alvo
+            target_m, target_y = get_target_month_year()
+            calendar_month.set(target_m)
+            calendar_year.set(target_y)
+            update_mini_calendar()
         
         target_month_combo.configure(command=lambda x: on_target_change())
+        target_year_entry.bind("<Return>", lambda e: on_target_change())
+        target_year_entry.bind("<FocusOut>", lambda e: on_target_change())
         
         # Salvar automaticamente ao fechar
         def on_dialog_close():
@@ -1593,10 +1646,10 @@ class CounterApp:
     
     def _on_closing(self) -> None:
         """Gerencia o fechamento da aplicação."""
-        # Para o visualizador e cria arquivo de fechamento
-        if self.html_viewer:
-            self.html_viewer.stop()
-            self.html_viewer.create_close_signal()
+        # DEPRECATED - Visualização HTML removida
+        # if self.html_viewer:
+        #     self.html_viewer.stop()
+        #     self.html_viewer.create_close_signal()
         
         # Salva os dados finais
         try:
@@ -1606,12 +1659,32 @@ class CounterApp:
         except Exception:
             pass
         
-        # Fecha a aplicação primeiro
-        self.root.destroy()
+        # Pega o caminho do XLSX usando o export_path configurado pelo usuário
+        # Nome: relatorio_rts_{mes}.xlsx
+        current_month = MONTH_NAME_TO_NUMBER[self.month_var.get()]
+        month_name = self.month_var.get().lower()
+        xlsx_path = Path(self.counter.get_export_path(f"relatorio_rts_{month_name}.xlsx"))
         
-        # Pergunta se deseja abrir a planilha final (CSV view)
-        view_file_path = self.counter.file_path.with_name(f"{self.counter.file_path.stem}_view.csv")
-        open_final_csv_dialog(None, view_file_path)
+        if xlsx_path.exists():
+            # Mostra diálogo perguntando se quer abrir o relatório
+            from tkinter import messagebox
+            response = messagebox.askyesno(
+                "Relatório Gerado",
+                "Deseja abrir o relatório Excel gerado?\n\n"
+                f"Arquivo: {xlsx_path}",
+                icon="question"
+            )
+            
+            if response:
+                # Abre o arquivo XLSX
+                try:
+                    import os
+                    os.startfile(str(xlsx_path))
+                except Exception:
+                    pass
+        
+        # Fecha a aplicação
+        self.root.destroy()
 
 
 def run_app(data_path: Path | str | None = None, config_path: Path | str | None = None) -> None:

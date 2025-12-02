@@ -16,6 +16,9 @@ class Timer:
         self.auto_start_count = auto_start_count
         self.auto_stop_count = auto_stop_count
         self.elapsed_time: float = 0.0
+        # Flag para indicar se o timer foi iniciado na sessao atual
+        # Reseta quando o app reinicia para startar no primeiro +1
+        self._session_started: bool = False
 
     def start(self, manual: bool = True) -> None:
         """
@@ -49,15 +52,24 @@ class Timer:
         """
         Check if the counter value should trigger automatic start/stop.
         
+        O timer inicia automaticamente quando:
+        - E o primeiro +1 da sessao (app foi aberto/reiniciado)
+        - Ou quando atinge o auto_start_count (geralmente 1)
+        - Ou quando ultrapassa o auto_stop_count e o modulo eh 1
+        
         Args:
             count (int): Current counter value
         """
-        if count == self.auto_start_count:
+        # Se ainda nao iniciou nesta sessao e o timer nao esta rodando,
+        # inicia no primeiro clique de +1 (quando count aumentou)
+        if not self._session_started and not self.is_running:
+            self._session_started = True
             self.start(manual=False)
-        elif count == self.auto_stop_count:
+            return
+        
+        # Logica original para auto-stop em lotes
+        if count == self.auto_stop_count:
             self.stop(manual=False)
-        elif count > self.auto_stop_count and count % self.auto_stop_count == 1:
-            self.start(manual=False)
         elif count > self.auto_stop_count and count % self.auto_stop_count == 0:
             self.stop(manual=False)
 
@@ -79,6 +91,8 @@ class Timer:
         self.stop_time = None
         self.is_running = False
         self.elapsed_time = 0.0
+        # Reseta flag de sessao para permitir novo auto-start no proximo +1
+        self._session_started = False
 
     def configure_auto_triggers(self, start_count: int, stop_count: int) -> None:
         """

@@ -2,15 +2,6 @@
 
 Lista de melhorias e correções planejadas para o projeto.
 
----
-
-## Correções
-
-- [ ] **Correção do CSV gerado**: Está gerando com vários meses do ano (deveria filtrar apenas o mês atual ou período relevante)
-- [ ] **Corrigir resumo final**: Revisar cálculos e exibição do resumo semanal/mensal
-
----
-
 ## Refatoração
 
 - [ ] **Refatoração DDD**: Aplicar padrões de Domain-Driven Design para melhor organização do código

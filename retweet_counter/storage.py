@@ -122,12 +122,13 @@ def _get_custom_week_number(target_date: date, first_weekday: int) -> tuple[int,
 class WeeklyTarget:
     """Representa a meta semanal configurada pelo usuário."""
     year: int
-    week: int  # ISO week number
+    month: int  # Mês (1-12)
+    week_in_month: int  # Número da semana no mês (1-5)
     expected: int = 0
 
     def week_key(self) -> str:
-        """Chave única para a semana."""
-        return f"{self.year}-W{self.week:02d}"
+        """Chave única para a semana no formato ano-mês-semana."""
+        return f"{self.year}-{self.month:02d}-S{self.week_in_month}"
 
 
 @dataclass
@@ -206,23 +207,22 @@ class CalendarData:
 
     def to_matrix_with_week_configs(self, week_configs: list) -> list[list[tuple[int, int, int] | None]]:
         """
-        Retorna matrix baseada nas configurações personalizadas de semana.
+        Retorna matrix do calendário do mês atual em formato (dia, mês, ano).
         
-        Mantém o calendário do mês atual, mas ajusta semanas que têm configuração
-        personalizada (ex: S1 começando em um dia do mês anterior).
+        IMPORTANTE: O calendário SEMPRE mostra os dias normais do mês.
+        As configurações de semana são usadas apenas para:
+        - Definir cores/agrupamento visual
+        - Cálculos de metas semanais
         
-        Cada célula contém uma tupla (dia, mês, ano) ou None.
+        NÃO substitui os dias do mês pelos dias da configuração.
         
         Args:
-            week_configs: Lista de WeekConfig para este mês.
+            week_configs: Lista de WeekConfig para este mês (usado para referência futura).
         
         Returns:
             Matrix de 6 semanas onde cada célula é (dia, mês, ano) ou None.
         """
         import calendar as cal_mod
-        
-        # Cria dicionário de configurações por número da semana
-        config_by_week = {c.week_in_month: c for c in week_configs} if week_configs else {}
         
         # Obtém o calendário base do mês
         first_weekday = getattr(self, '_first_weekday', 0)
@@ -235,29 +235,15 @@ class CalendarData:
         
         matrix: list[list[tuple[int, int, int] | None]] = []
         
-        for week_num, week in enumerate(base_matrix, start=1):
-            if week_num in config_by_week:
-                # Esta semana tem configuração personalizada
-                config = config_by_week[week_num]
-                start_date = config.get_start_date()
-                
-                week_row: list[tuple[int, int, int] | None] = []
-                for i in range(7):
-                    if i < config.work_days:
-                        current_date = start_date + timedelta(days=i)
-                        week_row.append((current_date.day, current_date.month, current_date.year))
-                    else:
-                        week_row.append(None)
-                matrix.append(week_row)
-            else:
-                # Semana padrão - converte para formato (dia, mês, ano)
-                week_row = []
-                for day in week:
-                    if day == 0:
-                        week_row.append(None)
-                    else:
-                        week_row.append((day, self.month, self.year))
-                matrix.append(week_row)
+        for week in base_matrix:
+            week_row: list[tuple[int, int, int] | None] = []
+            for day in week:
+                if day == 0:
+                    week_row.append(None)
+                else:
+                    # Sempre mostra o dia do mês atual
+                    week_row.append((day, self.month, self.year))
+            matrix.append(week_row)
         
         return matrix
 
@@ -271,20 +257,19 @@ class CalendarData:
         week_start = _get_custom_week_start(target_date, first_weekday)
         week_end = week_start + timedelta(days=6)
         
-        # Calcula total feito na semana
+        # Calcula total feito na semana e dias restantes (sem valor)
         week_total = 0
         remaining_days = 0
         
         for i in range(7):
             current_day = week_start + timedelta(days=i)
             if (current_day.month == self.month and 
-                current_day.year == self.year and
-                current_day <= target_date):
-                week_total += self.totals.get(current_day.day, 0)
-            elif (current_day.month == self.month and 
-                  current_day.year == self.year and
-                  current_day > target_date):
-                remaining_days += 1
+                current_day.year == self.year):
+                day_value = self.totals.get(current_day.day, 0)
+                week_total += day_value
+                # Dia restante = dia sem valor registrado
+                if day_value == 0:
+                    remaining_days += 1
         
         # Busca meta configurada para a semana
         week_key = f"{year}-W{week:02d}"
@@ -442,8 +427,20 @@ class CalendarCounter:
                 )
             ) from error
 
-    def _write_view_file(self) -> None:
-        """Cria arquivo CSV em formato de calendário visual para Excel com células separadas."""
+    def _write_view_file(self, current_year: int | None = None, current_month: int | None = None) -> None:
+        """
+        Cria arquivo CSV em formato de calendário visual para Excel com células separadas.
+        
+        Args:
+            current_year: Ano atual para filtrar (opcional). Se None, usa mês atual.
+            current_month: Mês atual para filtrar (opcional). Se None, usa mês atual.
+        """
+        # Define período a exportar (apenas mês atual)
+        if current_year is None or current_month is None:
+            today = date.today()
+            current_year = today.year
+            current_month = today.month
+        
         # Usa pasta de exportação personalizada se definida
         view_path = self.get_export_path(f"{self.file_path.stem}_view.csv")
         
@@ -451,67 +448,186 @@ class CalendarCounter:
         weekday_labels = get_weekday_labels(self.first_weekday)
         weekday_labels_upper = [label.upper() for label in weekday_labels]
         
-        # Cria estrutura de calendário visual
+        # Cria estrutura de calendário visual - APENAS MÊS ATUAL
         view_rows = []
         
-        for key, month_totals in sorted(self._data.items()):
-            year_val, month_val = map(int, key.split("-"))
-            month_name = MONTH_NUMBER_TO_NAME.get(month_val, f"Mês {month_val}")
-            calendar_data = CalendarData(month=month_val, year=year_val, totals=month_totals, _first_weekday=self.first_weekday)
+        key = _month_key(current_year, current_month)
+        if key in self._data:
+            month_totals = self._data[key]
+            month_name = MONTH_NUMBER_TO_NAME.get(current_month, f"Mês {current_month}")
+            calendar_data = CalendarData(month=current_month, year=current_year, totals=month_totals, _first_weekday=self.first_weekday)
             
             # Adiciona cabeçalho do mês
-            month_header = {"": f"{month_name} {year_val}", "Semana": ""}
+            month_header = {"": f"{month_name} {current_year}", "Semana": ""}
             for label in weekday_labels:
                 month_header[label] = ""
             view_rows.append(month_header)
             
-            # Adiciona cada semana do mês (2 linhas por semana: dias e RTs)
-            for week_num, week in enumerate(calendar_data.to_matrix_configured(), start=1):
-                # Verifica se há configuração personalizada para esta semana
-                week_config = self.get_week_config(year_val, month_val, week_num)
-                week_label = f"S{week_num}"
-                
-                # Se tem configuração, adiciona informação de dias de trabalho
-                if week_config:
-                    week_label = f"S{week_num} ({week_config.work_days}d)"
-                
-                # Linha 1: Números dos dias (pequenos, discretos)
-                row_days = {"": "", "Semana": week_label}
-                for weekday_index, day in enumerate(week):
-                    weekday_label = weekday_labels[weekday_index]
-                    if day is None:
-                        row_days[weekday_label] = ""
-                    else:
-                        row_days[weekday_label] = f"dia {day:02d}"
-                
-                view_rows.append(row_days)
-                
-                # Linha 2: Valores de RTs (grandes, em destaque)
-                row_rts = {"": "", "Semana": ""}
-                for weekday_index, day in enumerate(week):
-                    weekday_label = weekday_labels[weekday_index]
-                    if day is None:
-                        row_rts[weekday_label] = ""
-                    else:
-                        retweet_count = month_totals.get(day, 0)
-                        row_rts[weekday_label] = retweet_count
-                
-                view_rows.append(row_rts)
-                
-                # Linha separadora entre semanas
-                separator_row = {"": "", "Semana": ""}
-                for label in weekday_labels:
-                    separator_row[label] = ""
-                view_rows.append(separator_row)
+            # Obtém todas as configurações de semanas para este mês
+            week_configs = self.get_all_week_configs_for_month(current_year, current_month)
             
-            # Linha em branco entre meses
-            blank_row = {"": "", "Semana": ""}
-            for label in weekday_labels:
-                blank_row[label] = ""
-            view_rows.append(blank_row)
+            # Se há configurações personalizadas, usa elas para gerar o calendário
+            if week_configs:
+                # Gera calendário baseado nas configurações de semana
+                for config in week_configs:
+                    week_num = config.week_in_month
+                    week_label = f"S{week_num} ({config.work_days}d)"
+                    
+                    # Obtém todas as datas desta semana configurada
+                    week_dates = config.get_all_dates()
+                    
+                    # Calcula em qual coluna começa baseado no dia da semana do início
+                    start_weekday = config.first_weekday  # 0=Seg, 6=Dom
+                    # Ajusta para a ordem das colunas (baseado no first_weekday global)
+                    start_col = (start_weekday - self.first_weekday) % 7
+                    
+                    # Se a semana não começa na primeira coluna, preenche com dias do mês anterior
+                    days_before = []
+                    if start_col > 0:
+                        first_date = week_dates[0]
+                        for i in range(start_col, 0, -1):
+                            prev_date = first_date - timedelta(days=i)
+                            days_before.append(prev_date)
+                    
+                    # Calcula quantos dias cabem na primeira linha
+                    days_in_first_row = min(len(week_dates), 7 - start_col)
+                    days_in_second_row = len(week_dates) - days_in_first_row
+                    
+                    # ===== PRIMEIRA LINHA DA SEMANA =====
+                    # Linha 1: Números dos dias
+                    row_days = {"": "", "Semana": week_label}
+                    for label in weekday_labels:
+                        row_days[label] = ""
+                    
+                    # Preenche dias anteriores (do mês anterior, em cinza/discreto)
+                    for i, prev_date in enumerate(days_before):
+                        label = weekday_labels[i]
+                        month_abbr = MONTH_NUMBER_TO_NAME.get(prev_date.month, "")[:3]
+                        row_days[label] = f"({prev_date.day:02d}/{month_abbr})"
+                    
+                    # Preenche os dias da semana configurada (primeira linha)
+                    for i in range(days_in_first_row):
+                        day_date = week_dates[i]
+                        col_idx = start_col + i
+                        label = weekday_labels[col_idx]
+                        if day_date.month != current_month:
+                            month_abbr = MONTH_NUMBER_TO_NAME.get(day_date.month, "")[:3]
+                            row_days[label] = f"{day_date.day:02d}/{month_abbr}"
+                        else:
+                            row_days[label] = f"dia {day_date.day:02d}"
+                    view_rows.append(row_days)
+                    
+                    # Linha 2: Valores de RTs (primeira linha)
+                    row_rts = {"": "", "Semana": ""}
+                    for label in weekday_labels:
+                        row_rts[label] = ""
+                    
+                    # Preenche valores dos dias anteriores
+                    # Se é do mês anterior, mostra o valor; se é do mesmo mês, mostra "-"
+                    for i, prev_date in enumerate(days_before):
+                        label = weekday_labels[i]
+                        if prev_date.month != current_month:
+                            # Dia do mês anterior - mostra valor
+                            other_key = _month_key(prev_date.year, prev_date.month)
+                            if other_key in self._data:
+                                row_rts[label] = self._data[other_key].get(prev_date.day, 0)
+                            else:
+                                row_rts[label] = "-"
+                        else:
+                            # Dia do mesmo mês mas não pertence a esta semana
+                            row_rts[label] = "-"
+                    
+                    # Preenche valores de RT da semana configurada (primeira linha)
+                    for i in range(days_in_first_row):
+                        day_date = week_dates[i]
+                        col_idx = start_col + i
+                        label = weekday_labels[col_idx]
+                        if day_date.month == current_month and day_date.year == current_year:
+                            row_rts[label] = month_totals.get(day_date.day, 0)
+                        else:
+                            other_key = _month_key(day_date.year, day_date.month)
+                            if other_key in self._data:
+                                row_rts[label] = self._data[other_key].get(day_date.day, 0)
+                            else:
+                                row_rts[label] = 0
+                    view_rows.append(row_rts)
+                    
+                    # ===== SEGUNDA LINHA DA SEMANA (se necessário) =====
+                    if days_in_second_row > 0:
+                        # Linha de dias (continuação)
+                        row_days2 = {"": "", "Semana": f"S{week_num} cont."}
+                        for label in weekday_labels:
+                            row_days2[label] = ""
+                        
+                        # Preenche os dias restantes (começando na coluna 0)
+                        for i in range(days_in_second_row):
+                            day_date = week_dates[days_in_first_row + i]
+                            label = weekday_labels[i]
+                            if day_date.month != current_month:
+                                month_abbr = MONTH_NUMBER_TO_NAME.get(day_date.month, "")[:3]
+                                row_days2[label] = f"{day_date.day:02d}/{month_abbr}"
+                            else:
+                                row_days2[label] = f"dia {day_date.day:02d}"
+                        view_rows.append(row_days2)
+                        
+                        # Linha de RTs (continuação)
+                        row_rts2 = {"": "", "Semana": ""}
+                        for label in weekday_labels:
+                            row_rts2[label] = ""
+                        
+                        # Preenche valores de RT restantes
+                        for i in range(days_in_second_row):
+                            day_date = week_dates[days_in_first_row + i]
+                            label = weekday_labels[i]
+                            if day_date.month == current_month and day_date.year == current_year:
+                                row_rts2[label] = month_totals.get(day_date.day, 0)
+                            else:
+                                other_key = _month_key(day_date.year, day_date.month)
+                                if other_key in self._data:
+                                    row_rts2[label] = self._data[other_key].get(day_date.day, 0)
+                                else:
+                                    row_rts2[label] = 0
+                        view_rows.append(row_rts2)
+                    
+                    # Linha separadora
+                    separator_row = {"": "", "Semana": ""}
+                    for label in weekday_labels:
+                        separator_row[label] = ""
+                    view_rows.append(separator_row)
+            else:
+                # Sem configurações personalizadas - usa calendário tradicional
+                for week_num, week in enumerate(calendar_data.to_matrix_configured(), start=1):
+                    week_label = f"S{week_num}"
+                    
+                    # Linha 1: Números dos dias
+                    row_days = {"": "", "Semana": week_label}
+                    for weekday_index, day in enumerate(week):
+                        weekday_label = weekday_labels[weekday_index]
+                        if day is None:
+                            row_days[weekday_label] = ""
+                        else:
+                            row_days[weekday_label] = f"dia {day:02d}"
+                    view_rows.append(row_days)
+                    
+                    # Linha 2: Valores de RTs
+                    row_rts = {"": "", "Semana": ""}
+                    for weekday_index, day in enumerate(week):
+                        weekday_label = weekday_labels[weekday_index]
+                        if day is None:
+                            row_rts[weekday_label] = ""
+                        else:
+                            retweet_count = month_totals.get(day, 0)
+                            row_rts[weekday_label] = retweet_count
+                    view_rows.append(row_rts)
+                    
+                    # Linha separadora
+                    separator_row = {"": "", "Semana": ""}
+                    for label in weekday_labels:
+                        separator_row[label] = ""
+                    view_rows.append(separator_row)
         
-        # Adiciona seção de resumo semanal
-        self._add_weekly_summary_section(view_rows, weekday_labels)
+        # Adiciona seção de resumo semanal (apenas mês atual)
+        self._add_weekly_summary_section(view_rows, weekday_labels, current_year, current_month)
         
         if view_rows:
             columns = ["", "Semana", *weekday_labels]
@@ -532,16 +648,26 @@ class CalendarCounter:
                 # Se não existe, cria normalmente
                 view_df.to_csv(view_path, sep=";", index=False, encoding="utf-8-sig")
         
-        # Também cria arquivo XLSX com cores
-        self._write_xlsx_with_colors()
+        # Também cria arquivo XLSX com cores (mesmo mês)
+        self._write_xlsx_with_colors(current_year, current_month)
 
-    def _write_xlsx_with_colors(self) -> None:
+    def _write_xlsx_with_colors(self, current_year: int | None = None, current_month: int | None = None) -> None:
         """
         Cria arquivo XLSX com formatação de cores por semana.
         
         Cada semana do mês recebe uma cor diferente para facilitar
         a visualização do usuário.
+        
+        Args:
+            current_year: Ano para filtrar (opcional). Se None, usa mês atual.
+            current_month: Mês para filtrar (opcional). Se None, usa mês atual.
         """
+        # Define período a exportar (apenas mês atual)
+        if current_year is None or current_month is None:
+            today = date.today()
+            current_year = today.year
+            current_month = today.month
+        
         try:
             from openpyxl import Workbook
             from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -550,7 +676,9 @@ class CalendarCounter:
             # Se openpyxl não está instalado, ignora silenciosamente
             return
         
-        xlsx_path = self.get_export_path(f"{self.file_path.stem}_view.xlsx")
+        # Nome do arquivo: relatorio_rts_{mes}.xlsx
+        month_name = MONTH_NUMBER_TO_NAME.get(current_month, f"mes{current_month}").lower()
+        xlsx_path = self.get_export_path(f"relatorio_rts_{month_name}.xlsx")
         
         try:
             workbook = Workbook()
@@ -583,12 +711,14 @@ class CalendarCounter:
             weekday_labels = get_weekday_labels(self.first_weekday)
             current_row = 1
             
-            for key, month_totals in sorted(self._data.items()):
-                year_val, month_val = map(int, key.split("-"))
-                month_name = MONTH_NUMBER_TO_NAME.get(month_val, f"Mês {month_val}")
+            # Processa apenas o mês atual
+            key = _month_key(current_year, current_month)
+            if key in self._data:
+                month_totals = self._data[key]
+                month_name = MONTH_NUMBER_TO_NAME.get(current_month, f"Mês {current_month}")
                 calendar_data = CalendarData(
-                    month=month_val, 
-                    year=year_val, 
+                    month=current_month, 
+                    year=current_year, 
                     totals=month_totals, 
                     _first_weekday=self.first_weekday
                 )
@@ -600,7 +730,7 @@ class CalendarCounter:
                     end_row=current_row, 
                     end_column=len(weekday_labels) + 2
                 )
-                month_cell = sheet.cell(row=current_row, column=1, value=f"{month_name} {year_val}")
+                month_cell = sheet.cell(row=current_row, column=1, value=f"{month_name} {current_year}")
                 month_cell.font = Font(bold=True, size=16, color="28a745")
                 month_cell.alignment = Alignment(horizontal='center')
                 current_row += 1
@@ -622,61 +752,228 @@ class CalendarCounter:
                     cell.border = thin_border
                 current_row += 1
                 
-                # Semanas do mês
-                for week_num, week in enumerate(calendar_data.to_matrix_configured(), start=1):
-                    week_fill = week_fills.get(week_num, week_fills[1])
-                    week_config = self.get_week_config(year_val, month_val, week_num)
-                    
-                    # Label da semana
-                    week_label = f"S{week_num}"
-                    if week_config:
-                        week_label = f"S{week_num} ({week_config.work_days}d)"
-                    
-                    # Linha dos dias
-                    sheet.cell(row=current_row, column=1, value="").fill = week_fill
-                    
-                    week_cell = sheet.cell(row=current_row, column=2, value=week_label)
-                    week_cell.font = week_label_font
-                    week_cell.fill = week_fill
-                    week_cell.alignment = Alignment(horizontal='center', vertical='center')
-                    week_cell.border = thin_border
-                    
-                    for col_idx, day in enumerate(week, start=3):
-                        cell = sheet.cell(row=current_row, column=col_idx)
-                        if day is not None:
-                            cell.value = f"dia {day:02d}"
+                # Obtém todas as configurações de semanas para este mês
+                week_configs = self.get_all_week_configs_for_month(current_year, current_month)
+                
+                # Se há configurações personalizadas, usa elas
+                if week_configs:
+                    for config in week_configs:
+                        week_num = config.week_in_month
+                        week_fill = week_fills.get(week_num, week_fills[1])
+                        week_label = f"S{week_num} ({config.work_days}d)"
+                        
+                        # Obtém todas as datas desta semana configurada
+                        week_dates = config.get_all_dates()
+                        
+                        # Calcula em qual coluna começa baseado no dia da semana do início
+                        start_weekday = config.first_weekday
+                        start_col = (start_weekday - self.first_weekday) % 7
+                        
+                        # Se a semana não começa na primeira coluna, calcula dias anteriores
+                        days_before = []
+                        if start_col > 0:
+                            first_date = week_dates[0]
+                            for i in range(start_col, 0, -1):
+                                prev_date = first_date - timedelta(days=i)
+                                days_before.append(prev_date)
+                        
+                        # Calcula quantos dias cabem na primeira linha
+                        days_in_first_row = min(len(week_dates), 7 - start_col)
+                        days_in_second_row = len(week_dates) - days_in_first_row
+                        
+                        # ===== PRIMEIRA LINHA DA SEMANA =====
+                        # Linha dos dias
+                        sheet.cell(row=current_row, column=1, value="").fill = week_fill
+                        
+                        week_cell = sheet.cell(row=current_row, column=2, value=week_label)
+                        week_cell.font = week_label_font
+                        week_cell.fill = week_fill
+                        week_cell.alignment = Alignment(horizontal='center', vertical='center')
+                        week_cell.border = thin_border
+                        
+                        # Preenche todas as colunas com a cor da semana
+                        for col_idx in range(3, 3 + len(weekday_labels)):
+                            cell = sheet.cell(row=current_row, column=col_idx)
+                            cell.fill = week_fill
+                            cell.alignment = Alignment(horizontal='center')
+                            cell.border = thin_border
+                        
+                        # Preenche dias anteriores (do mês anterior) - com cor cinza
+                        for i, prev_date in enumerate(days_before):
+                            col_idx = 3 + i
+                            cell = sheet.cell(row=current_row, column=col_idx)
+                            month_abbr = MONTH_NUMBER_TO_NAME.get(prev_date.month, "")[:3]
+                            cell.value = f"({prev_date.day:02d}/{month_abbr})"
+                            cell.font = Font(size=8, color="888888")
+                        
+                        # Preenche os dias da semana configurada (primeira linha)
+                        for i in range(days_in_first_row):
+                            day_date = week_dates[i]
+                            col_idx = 3 + start_col + i
+                            cell = sheet.cell(row=current_row, column=col_idx)
+                            if day_date.month != current_month:
+                                month_abbr = MONTH_NUMBER_TO_NAME.get(day_date.month, "")[:3]
+                                cell.value = f"{day_date.day:02d}/{month_abbr}"
+                            else:
+                                cell.value = f"dia {day_date.day:02d}"
                             cell.font = day_font
-                        cell.fill = week_fill
-                        cell.alignment = Alignment(horizontal='center')
-                        cell.border = thin_border
-                    current_row += 1
-                    
-                    # Linha dos RTs
-                    sheet.cell(row=current_row, column=1, value="").fill = week_fill
-                    sheet.cell(row=current_row, column=2, value="").fill = week_fill
-                    
-                    for col_idx, day in enumerate(week, start=3):
-                        cell = sheet.cell(row=current_row, column=col_idx)
-                        if day is not None:
-                            rt_count = month_totals.get(day, 0)
+                        current_row += 1
+                        
+                        # Linha dos RTs (primeira linha)
+                        sheet.cell(row=current_row, column=1, value="").fill = week_fill
+                        sheet.cell(row=current_row, column=2, value="").fill = week_fill
+                        
+                        # Preenche todas as colunas com a cor da semana
+                        for col_idx in range(3, 3 + len(weekday_labels)):
+                            cell = sheet.cell(row=current_row, column=col_idx)
+                            cell.fill = week_fill
+                            cell.alignment = Alignment(horizontal='center')
+                            cell.border = thin_border
+                        
+                        # Preenche valores dos dias anteriores - com cor cinza
+                        # Se é do mês anterior, mostra o valor; se é do mesmo mês, mostra "-"
+                        for i, prev_date in enumerate(days_before):
+                            col_idx = 3 + i
+                            cell = sheet.cell(row=current_row, column=col_idx)
+                            if prev_date.month != current_month:
+                                # Dia do mês anterior - mostra valor
+                                other_key = _month_key(prev_date.year, prev_date.month)
+                                if other_key in self._data:
+                                    cell.value = self._data[other_key].get(prev_date.day, 0)
+                                else:
+                                    cell.value = "-"
+                            else:
+                                # Dia do mesmo mês mas não pertence a esta semana
+                                cell.value = "-"
+                            cell.font = Font(size=12, color="888888")
+                        
+                        # Preenche os valores de RT da semana configurada (primeira linha)
+                        for i in range(days_in_first_row):
+                            day_date = week_dates[i]
+                            col_idx = 3 + start_col + i
+                            cell = sheet.cell(row=current_row, column=col_idx)
+                            if day_date.month == current_month and day_date.year == current_year:
+                                rt_count = month_totals.get(day_date.day, 0)
+                            else:
+                                other_key = _month_key(day_date.year, day_date.month)
+                                if other_key in self._data:
+                                    rt_count = self._data[other_key].get(day_date.day, 0)
+                                else:
+                                    rt_count = 0
                             cell.value = rt_count
                             cell.font = rt_font
-                        cell.fill = week_fill
-                        cell.alignment = Alignment(horizontal='center')
-                        cell.border = thin_border
-                    current_row += 1
-                    
-                    # Linha separadora
-                    current_row += 1
-                
-                # Espaço entre meses
-                current_row += 1
+                        current_row += 1
+                        
+                        # ===== SEGUNDA LINHA DA SEMANA (se necessário) =====
+                        if days_in_second_row > 0:
+                            # Linha dos dias (continuação)
+                            sheet.cell(row=current_row, column=1, value="").fill = week_fill
+                            
+                            cont_cell = sheet.cell(row=current_row, column=2, value=f"S{week_num} cont.")
+                            cont_cell.font = Font(size=8, italic=True)
+                            cont_cell.fill = week_fill
+                            cont_cell.alignment = Alignment(horizontal='center', vertical='center')
+                            cont_cell.border = thin_border
+                            
+                            # Preenche todas as colunas com a cor da semana
+                            for col_idx in range(3, 3 + len(weekday_labels)):
+                                cell = sheet.cell(row=current_row, column=col_idx)
+                                cell.fill = week_fill
+                                cell.alignment = Alignment(horizontal='center')
+                                cell.border = thin_border
+                            
+                            # Preenche os dias restantes (começando na coluna 0 = domingo)
+                            for i in range(days_in_second_row):
+                                day_date = week_dates[days_in_first_row + i]
+                                col_idx = 3 + i  # Começa na coluna 0
+                                cell = sheet.cell(row=current_row, column=col_idx)
+                                if day_date.month != current_month:
+                                    month_abbr = MONTH_NUMBER_TO_NAME.get(day_date.month, "")[:3]
+                                    cell.value = f"{day_date.day:02d}/{month_abbr}"
+                                else:
+                                    cell.value = f"dia {day_date.day:02d}"
+                                cell.font = day_font
+                            current_row += 1
+                            
+                            # Linha dos RTs (continuação)
+                            sheet.cell(row=current_row, column=1, value="").fill = week_fill
+                            sheet.cell(row=current_row, column=2, value="").fill = week_fill
+                            
+                            # Preenche todas as colunas com a cor da semana
+                            for col_idx in range(3, 3 + len(weekday_labels)):
+                                cell = sheet.cell(row=current_row, column=col_idx)
+                                cell.fill = week_fill
+                                cell.alignment = Alignment(horizontal='center')
+                                cell.border = thin_border
+                            
+                            # Preenche os valores de RT restantes
+                            for i in range(days_in_second_row):
+                                day_date = week_dates[days_in_first_row + i]
+                                col_idx = 3 + i
+                                cell = sheet.cell(row=current_row, column=col_idx)
+                                if day_date.month == current_month and day_date.year == current_year:
+                                    rt_count = month_totals.get(day_date.day, 0)
+                                else:
+                                    other_key = _month_key(day_date.year, day_date.month)
+                                    if other_key in self._data:
+                                        rt_count = self._data[other_key].get(day_date.day, 0)
+                                    else:
+                                        rt_count = 0
+                                cell.value = rt_count
+                                cell.font = rt_font
+                            current_row += 1
+                        
+                        # Linha separadora
+                        current_row += 1
+                else:
+                    # Sem configurações personalizadas - usa calendário tradicional
+                    for week_num, week in enumerate(calendar_data.to_matrix_configured(), start=1):
+                        week_fill = week_fills.get(week_num, week_fills[1])
+                        week_label = f"S{week_num}"
+                        
+                        # Linha dos dias
+                        sheet.cell(row=current_row, column=1, value="").fill = week_fill
+                        
+                        week_cell = sheet.cell(row=current_row, column=2, value=week_label)
+                        week_cell.font = week_label_font
+                        week_cell.fill = week_fill
+                        week_cell.alignment = Alignment(horizontal='center', vertical='center')
+                        week_cell.border = thin_border
+                        
+                        for col_idx, day in enumerate(week, start=3):
+                            cell = sheet.cell(row=current_row, column=col_idx)
+                            if day is not None:
+                                cell.value = f"dia {day:02d}"
+                                cell.font = day_font
+                            cell.fill = week_fill
+                            cell.alignment = Alignment(horizontal='center')
+                            cell.border = thin_border
+                        current_row += 1
+                        
+                        # Linha dos RTs
+                        sheet.cell(row=current_row, column=1, value="").fill = week_fill
+                        sheet.cell(row=current_row, column=2, value="").fill = week_fill
+                        
+                        for col_idx, day in enumerate(week, start=3):
+                            cell = sheet.cell(row=current_row, column=col_idx)
+                            if day is not None:
+                                rt_count = month_totals.get(day, 0)
+                                cell.value = rt_count
+                                cell.font = rt_font
+                            cell.fill = week_fill
+                            cell.alignment = Alignment(horizontal='center')
+                            cell.border = thin_border
+                        current_row += 1
+                        
+                        # Linha separadora
+                        current_row += 1
             
-            # Adiciona resumo semanal
-            self._add_xlsx_summary_section(sheet, current_row, weekday_labels)
+            # Adiciona resumo semanal (apenas mês atual)
+            self._add_xlsx_summary_section(sheet, current_row, weekday_labels, current_year, current_month)
             
             # Ajusta largura das colunas
-            sheet.column_dimensions['A'].width = 5
+            # Coluna A: dobrada para caber texto de resumo semanal
+            sheet.column_dimensions['A'].width = 18
             sheet.column_dimensions['B'].width = 12
             for col_idx in range(3, len(weekday_labels) + 3):
                 sheet.column_dimensions[get_column_letter(col_idx)].width = 12
@@ -692,7 +989,8 @@ class CalendarCounter:
             # Em caso de erro, ignora silenciosamente (o CSV ainda será gerado)
             pass
 
-    def _add_xlsx_summary_section(self, sheet, start_row: int, weekday_labels: list[str]) -> None:
+    def _add_xlsx_summary_section(self, sheet, start_row: int, weekday_labels: list[str],
+                                    current_year: int | None = None, current_month: int | None = None) -> None:
         """
         Adiciona seção de resumo semanal no arquivo XLSX.
         
@@ -700,6 +998,8 @@ class CalendarCounter:
             sheet: Planilha do openpyxl.
             start_row: Linha inicial para o resumo.
             weekday_labels: Labels dos dias da semana.
+            current_year: Ano para filtrar. Se None, mostra todos.
+            current_month: Mês para filtrar. Se None, mostra todos.
         """
         try:
             from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -732,8 +1032,17 @@ class CalendarCounter:
             cell.alignment = Alignment(horizontal='center')
         current_row += 1
         
+        # Filtra dados apenas para mês/ano atual se especificado
+        if current_year and current_month:
+            filter_keys = [_month_key(current_year, current_month)]
+        else:
+            filter_keys = sorted(self._data.keys())
+        
         # Dados das semanas
-        for key, month_totals in sorted(self._data.items()):
+        for key in filter_keys:
+            if key not in self._data:
+                continue
+            month_totals = self._data[key]
             year_val, month_val = map(int, key.split("-"))
             calendar_data = CalendarData(
                 month=month_val, 
@@ -743,37 +1052,56 @@ class CalendarCounter:
             )
             
             for week_num, week in enumerate(calendar_data.to_matrix_configured(), start=1):
-                # Calcula totais da semana
-                week_total = sum(month_totals.get(day, 0) for day in week if day is not None)
+                # Busca configuração da semana
+                week_config = self.get_week_config(year_val, month_val, week_num)
                 
-                if week_total > 0:  # Só mostra semanas com dados
-                    # Busca configuração e meta
-                    week_config = self.get_week_config(year_val, month_val, week_num)
-                    
-                    # Busca meta usando primeira data válida da semana
-                    first_day = next((d for d in week if d is not None), 1)
-                    target_date = date(year_val, month_val, first_day)
-                    year_iso, week_iso = _get_custom_week_number(target_date, self.first_weekday)
-                    week_key = f"{year_iso}-W{week_iso:02d}"
-                    target = self._weekly_targets.get(week_key, WeeklyTarget(year_iso, week_iso, 0))
-                    
-                    expected = target.expected
-                    missing = max(0, expected - week_total)
-                    
-                    # Calcula dias restantes
-                    today = date.today()
-                    remaining_days = 0
+                # Busca meta usando novo formato (ano-mês-semana)
+                target = self.get_weekly_target(year_val, month_val, week_num)
+                expected = target.expected
+                
+                # Calcula totais da semana usando configuração se disponível
+                week_total = 0
+                remaining_days = 0
+                
+                if week_config:
+                    # Usa datas da configuração personalizada
+                    for day_date in week_config.get_all_dates():
+                        day_value = 0
+                        if day_date.month == month_val and day_date.year == year_val:
+                            day_value = month_totals.get(day_date.day, 0)
+                        else:
+                            # Dia de outro mês
+                            other_key = _month_key(day_date.year, day_date.month)
+                            if other_key in self._data:
+                                day_value = self._data[other_key].get(day_date.day, 0)
+                        week_total += day_value
+                        # Dia restante = dia sem valor registrado
+                        if day_value == 0:
+                            remaining_days += 1
+                else:
+                    # Usa calendário padrão
                     for day in week:
                         if day is not None:
-                            check_date = date(year_val, month_val, day)
-                            if check_date > today:
+                            day_value = month_totals.get(day, 0)
+                            week_total += day_value
+                            # Dia restante = dia sem valor registrado
+                            if day_value == 0:
                                 remaining_days += 1
-                    
+                
+                # Mostra semana se tem dados OU se tem configuração/meta
+                has_config = week_config is not None
+                has_target = expected > 0
+                has_data = week_total > 0
+                
+                if has_data or has_config or has_target:
+                    missing = max(0, expected - week_total)
                     daily_needed = missing // max(1, remaining_days) if remaining_days > 0 else 0
                     
                     # Nome da semana
                     month_name = MONTH_NUMBER_TO_NAME.get(month_val, f"M{month_val}")
                     week_display = f"{month_name[:3]}/S{week_num}"
+                    if week_config:
+                        week_display += f" ({week_config.work_days}d)"
                     
                     # Cor da semana
                     color_name = WEEK_COLOR_NAMES.get(week_num, "")
@@ -804,8 +1132,17 @@ class CalendarCounter:
                     
                     current_row += 1
 
-    def _add_weekly_summary_section(self, view_rows: list[dict], weekday_labels: list[str]) -> None:
-        """Adiciona seção de resumo semanal com metas no final do CSV."""
+    def _add_weekly_summary_section(self, view_rows: list[dict], weekday_labels: list[str], 
+                                      current_year: int | None = None, current_month: int | None = None) -> None:
+        """
+        Adiciona seção de resumo semanal com metas no final do CSV.
+        
+        Args:
+            view_rows: Lista de linhas do CSV.
+            weekday_labels: Labels dos dias da semana.
+            current_year: Ano para filtrar. Se None, mostra todos.
+            current_month: Mês para filtrar. Se None, mostra todos.
+        """
         # Linha separadora
         separator_row = {"": "=" * 40, "Semana": ""}
         for label in weekday_labels:
@@ -828,8 +1165,17 @@ class CalendarCounter:
                 column_headers[label] = ""
         view_rows.append(column_headers)
         
+        # Filtra dados apenas para mês/ano atual se especificado
+        if current_year and current_month:
+            filter_keys = [_month_key(current_year, current_month)]
+        else:
+            filter_keys = sorted(self._data.keys())
+        
         # Adiciona dados de cada semana que tem dados
-        for key, month_totals in sorted(self._data.items()):
+        for key in filter_keys:
+            if key not in self._data:
+                continue
+            month_totals = self._data[key]
             year_val, month_val = map(int, key.split("-"))
             month_name = MONTH_NUMBER_TO_NAME.get(month_val, f"M{month_val}")
             calendar_data = CalendarData(
@@ -840,33 +1186,55 @@ class CalendarCounter:
             )
             
             for week_num, week in enumerate(calendar_data.to_matrix_configured(), start=1):
-                # Calcula totais da semana
-                week_total = sum(month_totals.get(day, 0) for day in week if day is not None)
+                # Busca configuração da semana
+                week_config = self.get_week_config(year_val, month_val, week_num)
                 
-                if week_total > 0:  # Só mostra semanas com dados
-                    # Busca meta usando primeira data válida da semana
-                    first_day = next((d for d in week if d is not None), 1)
-                    target_date = date(year_val, month_val, first_day)
-                    year_iso, week_iso = _get_custom_week_number(target_date, self.first_weekday)
-                    week_key = f"{year_iso}-W{week_iso:02d}"
-                    target = self._weekly_targets.get(week_key, WeeklyTarget(year_iso, week_iso, 0))
-                    
-                    expected = target.expected
-                    missing = max(0, expected - week_total)
-                    
-                    # Calcula dias restantes
-                    today = date.today()
-                    remaining_days = 0
+                # Busca meta usando novo formato (ano-mês-semana)
+                target = self.get_weekly_target(year_val, month_val, week_num)
+                expected = target.expected
+                
+                # Calcula totais da semana usando configuração se disponível
+                week_total = 0
+                remaining_days = 0
+                
+                if week_config:
+                    # Usa datas da configuração personalizada
+                    for day_date in week_config.get_all_dates():
+                        day_value = 0
+                        if day_date.month == month_val and day_date.year == year_val:
+                            day_value = month_totals.get(day_date.day, 0)
+                        else:
+                            # Dia de outro mês - busca dados corretos
+                            other_key = _month_key(day_date.year, day_date.month)
+                            if other_key in self._data:
+                                day_value = self._data[other_key].get(day_date.day, 0)
+                        week_total += day_value
+                        # Dia restante = dia sem valor registrado
+                        if day_value == 0:
+                            remaining_days += 1
+                else:
+                    # Usa calendário padrão
                     for day in week:
                         if day is not None:
-                            check_date = date(year_val, month_val, day)
-                            if check_date > today:
+                            day_value = month_totals.get(day, 0)
+                            week_total += day_value
+                            # Dia restante = dia sem valor registrado
+                            if day_value == 0:
                                 remaining_days += 1
-                    
+                
+                # Mostra semana se tem dados OU se tem configuração/meta
+                has_config = week_config is not None
+                has_target = expected > 0
+                has_data = week_total > 0
+                
+                if has_data or has_config or has_target:
+                    missing = max(0, expected - week_total)
                     daily_needed = missing // max(1, remaining_days) if remaining_days > 0 else 0
                     
                     # Nome da semana no formato "Mês/S1"
                     week_display = f"{month_name[:3]}/S{week_num}"
+                    if week_config:
+                        week_display += f" ({week_config.work_days}d)"
                     color_name = WEEK_COLOR_NAMES.get(week_num, "")
                     
                     # Cria linha de dados
@@ -981,11 +1349,17 @@ class CalendarCounter:
                 
             for week_key, target_data in data.items():
                 year = target_data.get("year", 0)
-                week = target_data.get("week", 0)
+                month = target_data.get("month", 0)
+                week_in_month = target_data.get("week_in_month", 0)
                 expected = target_data.get("expected", 0)
                 
-                if year > 0 and week > 0:
-                    self._weekly_targets[week_key] = WeeklyTarget(year, week, expected)
+                # Compatibilidade com formato antigo (ISO week)
+                if month == 0 and "week" in target_data:
+                    # Formato antigo - ignora (será recriado pelo usuário)
+                    continue
+                
+                if year > 0 and month > 0 and week_in_month > 0:
+                    self._weekly_targets[week_key] = WeeklyTarget(year, month, week_in_month, expected)
                     
         except (json.JSONDecodeError, ValueError, KeyError):
             pass
@@ -996,7 +1370,8 @@ class CalendarCounter:
         for week_key, target in self._weekly_targets.items():
             data[week_key] = {
                 "year": target.year,
-                "week": target.week,
+                "month": target.month,
+                "week_in_month": target.week_in_month,
                 "expected": target.expected
             }
         
@@ -1006,26 +1381,95 @@ class CalendarCounter:
         except (OSError, ValueError):
             pass
 
-    def set_weekly_target(self, target_date: date, expected_value: int) -> None:
-        """Define meta semanal para a semana que contém a data especificada."""
-        year, week = _get_custom_week_number(target_date, self.first_weekday)
-        week_key = f"{year}-W{week:02d}"
+    def set_weekly_target(self, year: int, month: int, week_in_month: int, expected_value: int) -> None:
+        """
+        Define meta semanal para uma semana específica do mês.
         
-        self._weekly_targets[week_key] = WeeklyTarget(year, week, max(0, expected_value))
+        Args:
+            year: Ano.
+            month: Mês (1-12).
+            week_in_month: Número da semana no mês (1-5).
+            expected_value: Valor esperado para a semana.
+        """
+        week_key = f"{year}-{month:02d}-S{week_in_month}"
+        self._weekly_targets[week_key] = WeeklyTarget(year, month, week_in_month, max(0, expected_value))
         self._save_weekly_targets()
         self._persist_data()  # Atualiza CSV para refletir mudanças
 
-    def get_weekly_target(self, target_date: date) -> WeeklyTarget:
-        """Obtém meta semanal para a semana que contém a data especificada."""
-        year, week = _get_custom_week_number(target_date, self.first_weekday)
-        week_key = f"{year}-W{week:02d}"
+    def get_weekly_target(self, year: int, month: int, week_in_month: int) -> WeeklyTarget:
+        """
+        Obtém meta semanal para uma semana específica do mês.
         
-        return self._weekly_targets.get(week_key, WeeklyTarget(year, week, 0))
+        Args:
+            year: Ano.
+            month: Mês (1-12).
+            week_in_month: Número da semana no mês (1-5).
+        
+        Returns:
+            WeeklyTarget com a meta configurada ou meta zerada.
+        """
+        week_key = f"{year}-{month:02d}-S{week_in_month}"
+        return self._weekly_targets.get(week_key, WeeklyTarget(year, month, week_in_month, 0))
 
-    def get_weekly_summary(self, target_date: date) -> dict[str, int | str]:
-        """Obtém resumo semanal para a semana que contém a data especificada."""
-        calendar_data = self.get_month(target_date.year, target_date.month)
-        return calendar_data.get_week_summary(target_date.day, self._weekly_targets)
+    def get_weekly_summary(self, year: int, month: int, week_in_month: int) -> dict[str, int | str]:
+        """
+        Obtém resumo semanal para uma semana específica do mês.
+        
+        Args:
+            year: Ano.
+            month: Mês (1-12).
+            week_in_month: Número da semana no mês (1-5).
+        
+        Returns:
+            Dicionário com resumo (completed, expected, missing, daily_needed, remaining_days).
+        """
+        calendar_data = self.get_month(year, month)
+        
+        # Obtém configuração da semana
+        week_config = self.get_week_config(year, month, week_in_month)
+        
+        # Calcula total feito na semana
+        week_total = 0
+        remaining_days = 0
+        today = date.today()
+        
+        if week_config:
+            # Usa datas da configuração personalizada
+            for day_date in week_config.get_all_dates():
+                if day_date.month == month and day_date.year == year:
+                    week_total += calendar_data.totals.get(day_date.day, 0)
+                else:
+                    # Dia de outro mês - busca dados corretos
+                    other_data = self.get_month(day_date.year, day_date.month)
+                    week_total += other_data.totals.get(day_date.day, 0)
+                
+                if day_date > today:
+                    remaining_days += 1
+        else:
+            # Calcula baseado no calendário padrão
+            matrix = calendar_data.to_matrix_configured()
+            if week_in_month <= len(matrix):
+                week = matrix[week_in_month - 1]
+                for day in week:
+                    if day is not None:
+                        week_total += calendar_data.totals.get(day, 0)
+                        day_date = date(year, month, day)
+                        if day_date > today:
+                            remaining_days += 1
+        
+        # Busca meta configurada
+        target = self.get_weekly_target(year, month, week_in_month)
+        expected = target.expected
+        missing = max(0, expected - week_total)
+        daily_needed = missing // max(1, remaining_days) if remaining_days > 0 else 0
+        
+        return {
+            "completed": week_total,
+            "expected": expected,
+            "missing": missing,
+            "daily_needed": daily_needed,
+            "remaining_days": remaining_days
+        }
 
     def _load_config(self) -> None:
         """Carrega configurações adicionais como primeiro dia da semana e pasta de exportação."""
