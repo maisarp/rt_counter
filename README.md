@@ -44,7 +44,3 @@ count_button/
 ├── requirements.txt
 └── README.md
 ```
-
-## Licença
-
-Projeto privado.
